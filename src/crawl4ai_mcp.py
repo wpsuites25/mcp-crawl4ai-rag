@@ -1844,8 +1844,37 @@ async def crawl_recursive_internal_links(crawler: AsyncWebCrawler, start_urls: L
 async def main():
     transport = os.getenv("TRANSPORT", "sse")
     if transport == 'sse':
-        # Run the MCP server with sse transport
-        await mcp.run_sse_async()
+        api_key = os.getenv("API_KEY")
+        if api_key:
+            # Run with bearer token authentication middleware
+            import uvicorn
+            from starlette.middleware.base import BaseHTTPMiddleware
+            from starlette.responses import Response
+
+            class BearerAuthMiddleware(BaseHTTPMiddleware):
+                """Validates Bearer token on all SSE and message endpoints."""
+                async def dispatch(self, request, call_next):
+                    auth_header = request.headers.get("Authorization", "")
+                    if auth_header != f"Bearer {api_key}":
+                        return Response("Unauthorized", status_code=401)
+                    return await call_next(request)
+
+            sse_app = mcp.sse_app()
+            app_with_auth = BearerAuthMiddleware(sse_app)
+
+            config = uvicorn.Config(
+                app_with_auth,
+                host=os.getenv("HOST", "0.0.0.0"),
+                port=int(os.getenv("PORT", "8051")),
+                log_level="info",
+            )
+            server = uvicorn.Server(config)
+            print(f"MCP server starting with API key authentication on port {os.getenv('PORT', '8051')}")
+            await server.serve()
+        else:
+            # Run without authentication (local development)
+            print("WARNING: No API_KEY set. Server running without authentication.")
+            await mcp.run_sse_async()
     else:
         # Run the MCP server with stdio transport
         await mcp.run_stdio_async()
